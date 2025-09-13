@@ -818,3 +818,84 @@ def conflicts_pdf(standard_id: str):
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="conflicts_{standard_id}.pdf"'}
     )
+@app.get("/api/debug/extract")
+def debug_extract(file_path: str, pages: int = 15):
+    """
+    Download a PDF from the 'raw' bucket and show what text we can extract.
+    Returns short previews from:
+      - pdftotext (first N pages)
+      - OCRmyPDF -> pdftotext
+      - high-DPI OCR images (pdftoppm + tesseract)
+    """
+    import tempfile, subprocess, os, io, glob
+    from pdfminer.high_level import extract_text as _pm_extract
+
+    def _preview(label, txt):
+        t = (txt or "")[:800]
+        return {"len": len(txt or ""), "preview": t}
+
+    # 0) fetch the file bytes from Supabase
+    content = download_from_storage(file_path)
+
+    result = {}
+
+    # 1) pdftotext (first N pages)
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            in_path = os.path.join(td, "in.pdf")
+            out_txt = os.path.join(td, "out.txt")
+            with open(in_path, "wb") as f:
+                f.write(content)
+            subprocess.run(["pdftotext", "-layout", "-f", "1", "-l", str(pages), in_path, out_txt],
+                           check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            txt = ""
+            if os.path.exists(out_txt):
+                with open(out_txt, "r", encoding="utf-8", errors="ignore") as f:
+                    txt = f.read()
+            result["pdftotext"] = _preview("pdftotext", txt)
+    except Exception as e:
+        result["pdftotext_error"] = str(e)
+
+    # 2) OCRmyPDF → pdftotext
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            in_path = os.path.join(td, "in.pdf")
+            ocr_path = os.path.join(td, "ocr.pdf")
+            out_txt = os.path.join(td, "ocr.txt")
+            with open(in_path, "wb") as f:
+                f.write(content)
+            subprocess.run([
+                "ocrmypdf", "--skip-text", "--force-ocr", "--rotate-pages", "--deskew",
+                "--output-type", "pdf", in_path, ocr_path
+            ], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            subprocess.run(["pdftotext", "-layout", "-f", "1", "-l", str(pages), ocr_path, out_txt],
+                           check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            txt = ""
+            if os.path.exists(out_txt):
+                with open(out_txt, "r", encoding="utf-8", errors="ignore") as f:
+                    txt = f.read()
+            result["ocrmypdf_pdftotext"] = _preview("ocrmypdf_pdftotext", txt)
+    except Exception as e:
+        result["ocrmypdf_error"] = str(e)
+
+    # 3) High-DPI image OCR (first ~10 pages)
+    try:
+        from PIL import Image
+        import pytesseract
+        with tempfile.TemporaryDirectory() as td:
+            in_path = os.path.join(td, "in.pdf")
+            with open(in_path, "wb") as f:
+                f.write(content)
+            out_base = os.path.join(td, "page")
+            subprocess.run(["pdftoppm", "-r", "300", "-f", "1", "-l", "10", "-png", in_path, out_base],
+                           check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            chunks = []
+            for img_path in sorted(glob.glob(out_base + "-*.png")):
+                img = Image.open(img_path)
+                chunks.append(pytesseract.image_to_string(img, config="--oem 1 --psm 6 -l eng"))
+            txt = "\n".join(chunks)
+            result["image_ocr"] = _preview("image_ocr", txt)
+    except Exception as e:
+        result["image_ocr_error"] = str(e)
+
+    return result

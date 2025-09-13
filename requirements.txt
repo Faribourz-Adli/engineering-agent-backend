@@ -7,3 +7,4 @@ pdfminer.six==20231228
 pytesseract==0.3.13
 Pillow==10.4.0
 requests==2.32.3
+reportlab==3.6.13

@@ -212,10 +212,10 @@ def _copyright_heavy(t: str) -> bool:
 def extract_text_from_pdf(content: bytes) -> str:
     """
     Order:
-      1) pdftotext (first 5 pages)
-      2) pdfminer
-      3) OCRmyPDF → pdftotext and pdfminer
-      4) pdftoppm(300dpi)+tesseract OCR (first 5 pages)
+      1) pdftotext (first 15 pages)  → only accept if it looks like real technical text
+      2) pdfminer                    → same filter
+      3) OCRmyPDF → pdftotext       → same filter (then pdfminer as backup)
+      4) pdftoppm(300dpi)+tesseract (first 10 pages)
       5) last resort: single-image OCR
     """
     import tempfile, subprocess, os, io, glob
@@ -228,14 +228,15 @@ def extract_text_from_pdf(content: bytes) -> str:
             out_txt = os.path.join(td, "out.txt")
             with open(in_path, "wb") as f:
                 f.write(content)
-            subprocess.run(["pdftotext", "-layout", "-f", "1", "-l", "15", in_path, out_txt],
-                           check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            subprocess.run(
+                ["pdftotext", "-layout", "-f", "1", "-l", "15", in_path, out_txt],
+                check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
             if os.path.exists(out_txt):
                 with open(out_txt, "r", encoding="utf-8", errors="ignore") as f:
                     t = f.read()
                 if t and _text_useful(t) and _has_signal_terms(t) and not _copyright_heavy(t):
-    return t
-
+                    return t
     except Exception:
         pass
 
@@ -244,14 +245,11 @@ def extract_text_from_pdf(content: bytes) -> str:
         with io.BytesIO(content) as fh:
             t = _pm_extract(fh) or ""
             if t and _text_useful(t) and _has_signal_terms(t) and not _copyright_heavy(t):
-    return t
-
-# otherwise, keep going to OCR steps
-
+                return t
     except Exception:
         pass
 
-    # 3) OCRmyPDF → pdftotext (+ pdfminer as backup)
+    # 3) OCRmyPDF → pdftotext (then pdfminer as backup)
     try:
         ocr_bytes = _ocrmypdf(content)
         with tempfile.TemporaryDirectory() as td:
@@ -259,25 +257,24 @@ def extract_text_from_pdf(content: bytes) -> str:
             out_txt = os.path.join(td, "out.txt")
             with open(in_path, "wb") as f:
                 f.write(ocr_bytes)
-            subprocess.run(["pdftotext", "-layout", "-f", "1", "-l", "15", in_path, out_txt],
-                           check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            subprocess.run(
+                ["pdftotext", "-layout", "-f", "1", "-l", "15", in_path, out_txt],
+                check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
             if os.path.exists(out_txt):
                 with open(out_txt, "r", encoding="utf-8", errors="ignore") as f:
                     t = f.read()
                 if t and _text_useful(t) and _has_signal_terms(t) and not _copyright_heavy(t):
-    return t
-
-# otherwise, keep going to OCR steps
-
+                    return t
             # try pdfminer on the OCR'd PDF
             with open(in_path, "rb") as fh:
                 t = _pm_extract(fh) or ""
-                if t.strip():
+                if t and _text_useful(t) and _has_signal_terms(t):
                     return t
     except Exception:
         pass
 
-    # 4) High-DPI image OCR (first 5 pages)
+    # 4) High-DPI image OCR (first ~10 pages)
     try:
         from PIL import Image
         import pytesseract
@@ -286,13 +283,15 @@ def extract_text_from_pdf(content: bytes) -> str:
             with open(in_path, "wb") as f:
                 f.write(content)
             out_base = os.path.join(td, "page")
-            subprocess.run(["pdftoppm", "-r", "300", "-f", "1", "-l", "10", "-png", in_path, out_base],
-                           check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            texts = []
+            subprocess.run(
+                ["pdftoppm", "-r", "300", "-f", "1", "-l", "10", "-png", in_path, out_base],
+                check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
+            chunks = []
             for img_path in sorted(glob.glob(out_base + "-*.png")):
                 img = Image.open(img_path)
-                texts.append(pytesseract.image_to_string(img, config="--oem 1 --psm 6 -l eng"))
-            t = "\n".join(texts)
+                chunks.append(pytesseract.image_to_string(img, config="--oem 1 --psm 6 -l eng"))
+            t = "\n".join(chunks)
             if t.strip():
                 return t
     except Exception:

@@ -211,7 +211,7 @@ def extract_text_from_pdf(content: bytes) -> str:
             out_txt = os.path.join(td, "out.txt")
             with open(in_path, "wb") as f:
                 f.write(content)
-            subprocess.run(["pdftotext", "-layout", "-f", "1", "-l", "5", in_path, out_txt],
+            subprocess.run(["pdftotext", "-layout", "-f", "1", "-l", "15", in_path, out_txt],
                            check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             if os.path.exists(out_txt):
                 with open(out_txt, "r", encoding="utf-8", errors="ignore") as f:
@@ -238,7 +238,7 @@ def extract_text_from_pdf(content: bytes) -> str:
             out_txt = os.path.join(td, "out.txt")
             with open(in_path, "wb") as f:
                 f.write(ocr_bytes)
-            subprocess.run(["pdftotext", "-layout", "-f", "1", "-l", "5", in_path, out_txt],
+            subprocess.run(["pdftotext", "-layout", "-f", "1", "-l", "15", in_path, out_txt],
                            check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             if os.path.exists(out_txt):
                 with open(out_txt, "r", encoding="utf-8", errors="ignore") as f:
@@ -262,7 +262,7 @@ def extract_text_from_pdf(content: bytes) -> str:
             with open(in_path, "wb") as f:
                 f.write(content)
             out_base = os.path.join(td, "page")
-            subprocess.run(["pdftoppm", "-r", "300", "-f", "1", "-l", "5", "-png", in_path, out_base],
+            subprocess.run(["pdftoppm", "-r", "300", "-f", "1", "-l", "10", "-png", in_path, out_base],
                            check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             texts = []
             for img_path in sorted(glob.glob(out_base + "-*.png")):

@@ -191,6 +191,24 @@ def _ocrmypdf(content: bytes) -> bytes:
             return f.read()
 
 # --- replace your entire extract_text_from_pdf with this ---
+def _has_signal_terms(t: str) -> bool:
+    import re as _re
+    signals = [
+        r'\bAPI\s*(?:Spec(?:ification)?|Std(?:ard)?|RP|Recommended\s*Practice|Bulletin|Bull|MPMS)?\s*[A-Z]?\d+[A-Z]?\b',
+        r'\bISO\s*\d+(?:-\d+)*\b',
+        r'\bASME\s*[A-Z]?\d[\d\.]*\b',
+        r'\bIEC\s*\d+\b',
+        r'\bClass\s*(150|300|600|900|1500|2500)\b',
+        r'\b\d+(?:\.\d+)?\s*(bar|psi|kPa|MPa)\b',
+        r'\b-?\d+(?:\.\d+)?\s*(°C|°F|C|F)\b',
+    ]
+    return any(_re.search(p, t, _re.I) for p in signals)
+
+def _copyright_heavy(t: str) -> bool:
+    t_upper = (t or "").upper()
+    return t_upper.count("COPYRIGHT") >= 5 or "INFORMATION HANDLING SERVICES" in t_upper
+
+
 def extract_text_from_pdf(content: bytes) -> str:
     """
     Order:
@@ -224,8 +242,10 @@ def extract_text_from_pdf(content: bytes) -> str:
     try:
         with io.BytesIO(content) as fh:
             t = _pm_extract(fh) or ""
-            if _text_useful(t):
-                return t
+            if _text_useful(t) and _has_signal_terms(t) and not _copyright_heavy(t):
+    return t
+# otherwise, keep going to OCR steps
+
     except Exception:
         pass
 
@@ -242,8 +262,10 @@ def extract_text_from_pdf(content: bytes) -> str:
             if os.path.exists(out_txt):
                 with open(out_txt, "r", encoding="utf-8", errors="ignore") as f:
                     t = f.read()
-                if _text_useful(t):
-                    return t
+                if _text_useful(t) and _has_signal_terms(t) and not _copyright_heavy(t):
+    return t
+# otherwise, keep going to OCR steps
+
             # try pdfminer on the OCR'd PDF
             with open(in_path, "rb") as fh:
                 t = _pm_extract(fh) or ""

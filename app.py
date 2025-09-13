@@ -429,3 +429,22 @@ def build_xrefs(standard_id: str):
                 created += 1
 
     return {"ok": True, "created": created}
+@app.get("/api/xrefs/of/{standard_id}")
+def list_xrefs(standard_id: str):
+    sb = supabase_admin()
+    # fetch links where this standard points to others
+    links = sb.table("cross_references")\
+        .select("id,to_standard_id,evidence_text,confidence")\
+        .eq("from_standard_id", standard_id).execute().data or []
+    items = []
+    for l in links:
+        to = sb.table("standards").select("id,code,title,publisher")\
+            .eq("id", l["to_standard_id"]).single().execute().data
+        if to:
+            items.append({
+                "xref_id": l["id"],
+                "to_standard": to,
+                "evidence_text": l.get("evidence_text"),
+                "confidence": l.get("confidence", 0.0)
+            })
+    return {"count": len(items), "items": items}

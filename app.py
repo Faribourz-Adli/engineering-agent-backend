@@ -233,8 +233,9 @@ def extract_text_from_pdf(content: bytes) -> str:
             if os.path.exists(out_txt):
                 with open(out_txt, "r", encoding="utf-8", errors="ignore") as f:
                     t = f.read()
-                if _text_useful(t):
-                    return t
+                if t and _text_useful(t) and _has_signal_terms(t) and not _copyright_heavy(t):
+    return t
+
     except Exception:
         pass
 
@@ -242,8 +243,9 @@ def extract_text_from_pdf(content: bytes) -> str:
     try:
         with io.BytesIO(content) as fh:
             t = _pm_extract(fh) or ""
-            if _text_useful(t) and _has_signal_terms(t) and not _copyright_heavy(t):
+            if t and _text_useful(t) and _has_signal_terms(t) and not _copyright_heavy(t):
     return t
+
 # otherwise, keep going to OCR steps
 
     except Exception:
@@ -262,8 +264,9 @@ def extract_text_from_pdf(content: bytes) -> str:
             if os.path.exists(out_txt):
                 with open(out_txt, "r", encoding="utf-8", errors="ignore") as f:
                     t = f.read()
-                if _text_useful(t) and _has_signal_terms(t) and not _copyright_heavy(t):
+                if t and _text_useful(t) and _has_signal_terms(t) and not _copyright_heavy(t):
     return t
+
 # otherwise, keep going to OCR steps
 
             # try pdfminer on the OCR'd PDF

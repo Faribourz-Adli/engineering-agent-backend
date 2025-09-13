@@ -168,29 +168,71 @@ def ocr_pdf_with_poppler(content: bytes, max_pages: int = 5) -> str:
 
 # --- replace your existing extract_text_from_pdf with this ---
 def extract_text_from_pdf(content: bytes) -> str:
-    # 1) Try native PDF text
+    """
+    Try in order:
+      1) pdftotext (layout) for the first few pages
+      2) pdfminer (python) fallback
+      3) OCR via pdftoppm (-r 300) + tesseract on first pages
+      4) last resort: treat as single image
+    """
+    import tempfile, subprocess, os, io, glob
+    from pdfminer.high_level import extract_text as _pm_extract
+
+    # --- 1) pdftotext (Poppler) ---
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            pdf_path = os.path.join(td, "in.pdf")
+            out_txt = os.path.join(td, "out.txt")
+            with open(pdf_path, "wb") as f:
+                f.write(content)
+            # -layout keeps columns; read first 5 pages to be fast
+            cmd = ["pdftotext", "-layout", "-f", "1", "-l", "5", pdf_path, out_txt]
+            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if os.path.exists(out_txt):
+                with open(out_txt, "r", encoding="utf-8", errors="ignore") as f:
+                    t = f.read()
+                    if t and t.strip():
+                        return t
+    except Exception:
+        pass
+
+    # --- 2) pdfminer fallback ---
     try:
         with io.BytesIO(content) as fh:
-            text = extract_text(fh) or ""
-            if text.strip():
-                return text
+            t = _pm_extract(fh) or ""
+            if t.strip():
+                return t
     except Exception:
         pass
 
-    # 2) Try multi-page OCR via poppler + tesseract (best for scanned PDFs)
+    # --- 3) OCR multi-page at 300 DPI (first 5 pages) ---
     try:
-        t = ocr_pdf_with_poppler(content, max_pages=5)
-        if t.strip():
-            return t
+        from PIL import Image
+        import pytesseract
+        with tempfile.TemporaryDirectory() as td:
+            pdf_path = os.path.join(td, "in.pdf")
+            with open(pdf_path, "wb") as f:
+                f.write(content)
+            # Render images at higher resolution for better OCR
+            out_base = os.path.join(td, "page")
+            cmd = ["pdftoppm", "-r", "300", "-f", "1", "-l", "5", "-png", pdf_path, out_base]
+            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            texts = []
+            for img_path in sorted(glob.glob(out_base + "-*.png")):
+                img = Image.open(img_path)
+                texts.append(pytesseract.image_to_string(img, config="--oem 1 --psm 6 -l eng"))
+            t = "\n".join(texts)
+            if t.strip():
+                return t
     except Exception:
         pass
 
-    # 3) Last resort: try to open as a single image and OCR
+    # --- 4) last resort: single image ---
     try:
         from PIL import Image
         import pytesseract
         img = Image.open(io.BytesIO(content))
-        return pytesseract.image_to_string(img)
+        return pytesseract.image_to_string(img, config="--oem 1 --psm 6 -l eng")
     except Exception:
         return ""
 

@@ -139,8 +139,36 @@ def download_from_storage(file_path: str) -> bytes:
     resp = sb.storage.from_(RAW_BUCKET).download(file_path)
     return resp
 
+# --- add this helper ABOVE extract_text_from_pdf ---
+def ocr_pdf_with_poppler(content: bytes, max_pages: int = 5) -> str:
+    """
+    Renders the first N pages of a PDF to images (via pdftoppm) and OCRs them with Tesseract.
+    Works for scanned PDFs where pdfminer finds no text.
+    """
+    import tempfile, subprocess, glob
+    from PIL import Image
+    import pytesseract
+
+    with tempfile.TemporaryDirectory() as td:
+        pdf_path = os.path.join(td, "in.pdf")
+        with open(pdf_path, "wb") as f:
+            f.write(content)
+
+        # render first max_pages to PNGs: page-1.png, page-2.png, ...
+        out_base = os.path.join(td, "page")
+        cmd = ["pdftoppm", "-f", "1", "-l", str(max_pages), "-png", pdf_path, out_base]
+        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+        texts = []
+        for img_path in sorted(glob.glob(out_base + "-*.png")):
+            img = Image.open(img_path)
+            texts.append(pytesseract.image_to_string(img))
+        return "\n".join(texts)
+
+
+# --- replace your existing extract_text_from_pdf with this ---
 def extract_text_from_pdf(content: bytes) -> str:
-    # Try native PDF text first
+    # 1) Try native PDF text
     try:
         with io.BytesIO(content) as fh:
             text = extract_text(fh) or ""
@@ -149,7 +177,15 @@ def extract_text_from_pdf(content: bytes) -> str:
     except Exception:
         pass
 
-    # Fallback to OCR only if needed (lazy import to avoid startup issues)
+    # 2) Try multi-page OCR via poppler + tesseract (best for scanned PDFs)
+    try:
+        t = ocr_pdf_with_poppler(content, max_pages=5)
+        if t.strip():
+            return t
+    except Exception:
+        pass
+
+    # 3) Last resort: try to open as a single image and OCR
     try:
         from PIL import Image
         import pytesseract
@@ -157,6 +193,7 @@ def extract_text_from_pdf(content: bytes) -> str:
         return pytesseract.image_to_string(img)
     except Exception:
         return ""
+
 
 def upsert_standard_and_children(meta, text, session_id) -> str:
     sb = supabase_admin()

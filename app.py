@@ -43,14 +43,41 @@ class EnqueueProcessReq(BaseModel):
     upload_session_id: str
     file_path: str   # e.g., "clientA/API_6D.pdf" inside RAW_BUCKET
 
-def simple_extract_metadata(text: str):
+def simple_extract_metadata(text: str, file_name: Optional[str] = None):
+    # Very lightweight heuristics; improved to handle file-name fallbacks like "API Bull 6J.pdf"
     first_line = text.strip().splitlines()[0] if text.strip().splitlines() else ""
     title = first_line[:200]
 
-    m = re.search(r'\b(API\s?\d+[A-Z]?|ISO\s?\d+(?:-\d+)?|ASME\s?[A-Z]?\d[\d\.]*|IEC\s?\d+)\b', text[:2000], re.I)
-    code = m.group(0).upper() if m else None
+    # Search targets (API / ISO / ASME / IEC) in text first
+    patterns = [
+        r'\b(API\s*(?:Spec(?:ification)?|Std(?:ard)?|RP|Recommended\s*Practice|Bulletin|Bull|MPMS)?\s*[A-Z]?\d+[A-Z]?)\b',
+        r'\b(ISO\s*\d+(?:-\d+)*)\b',
+        r'\b(ASME\s*[A-Z]?\d[\d\.]*)\b',
+        r'\b(IEC\s*\d+)\b',
+    ]
+    text_window = text[:4000]
+    code = None
+    import re as _re
+    for pat in patterns:
+        m = _re.search(pat, text_window, _re.I)
+        if m:
+            code = m.group(1).upper()
+            break
 
-    dm = re.search(r'(20\d{2}|19\d{2})[-/\.]([01]?\d)[-/\.]([0-3]?\d)', text[:4000])
+    # Fallback: try to parse code from file name (e.g., "API Bull 6J.pdf")
+    if not code and file_name:
+        base = os.path.splitext(os.path.basename(file_name))[0].replace("_", " ")
+        for pat in patterns:
+            m = _re.search(pat, base, _re.I)
+            if m:
+                code = m.group(1).upper()
+                break
+        if not code:
+            # last resort: use the filename (uppercased) as code
+            code = base.upper()[:100]
+
+    # revision date (very rough)
+    dm = _re.search(r'(20\d{2}|19\d{2})[-/\.]([01]?\d)[-/\.]([0-3]?\d)', text_window)
     rev_date = None
     if dm:
         y, mth, d = dm.group(1), dm.group(2), dm.group(3)
@@ -59,11 +86,13 @@ def simple_extract_metadata(text: str):
         except:
             pass
 
+    # publisher guess from code
     pub = None
-    for k in ["API", "ISO", "ASME", "IEC"]:
-        if re.search(r'\b'+k+r'\b', text[:2000], re.I):
-            pub = k
-            break
+    if code:
+        if code.startswith("API"): pub = "API"
+        elif code.startswith("ISO"): pub = "ISO"
+        elif code.startswith("ASME"): pub = "ASME"
+        elif code.startswith("IEC"): pub = "IEC"
 
     return {
         "code": code,

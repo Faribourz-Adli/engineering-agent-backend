@@ -675,11 +675,13 @@ def _wrap_lines(text: str, max_width: float, font_name="Helvetica", font_size=11
     return lines
 
 @app.get("/api/conflicts/pdf/{standard_id}")
+@app.get("/api/conflicts/pdf/{standard_id}")
 def conflicts_pdf(standard_id: str):
     sb = supabase_admin()
     std = sb.table("standards").select("id,code,title").eq("id", standard_id).single().execute().data
     if not std:
         raise HTTPException(404, "standard not found")
+
     confA = sb.table("conflicts").select("*").eq("std_a_id", standard_id).execute().data or []
     confB = sb.table("conflicts").select("*").eq("std_b_id", standard_id).execute().data or []
     conflicts = confA + confB
@@ -698,31 +700,70 @@ def conflicts_pdf(standard_id: str):
     maxw = W - lm - rm
     y = H - tm
 
-    c.setFont("Helvetica-Bold", 16); c.drawString(lm, y, "Conflict Summary"); y -= 14
-    c.setFont("Helvetica", 10); c.drawString(lm, y, f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}"); y -= 18
+    # Header
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(lm, y, "Conflict Summary")
+    y -= 14
+    c.setFont("Helvetica", 10)
+    c.drawString(lm, y, f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}")
+    y -= 18
 
-    c.setFont("Helvetica-Bold", 12); c.drawString(lm, y, f"Standard: {std.get('code') or standard_id}"); y -= 14
+    # Standard info
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(lm, y, f"Standard: {std.get('code') or standard_id}")
+    y -= 14
     c.setFont("Helvetica", 11)
     for line in _wrap_lines(std.get("title") or "", maxw):
-        c.drawString(lm, y, line); y -= 13
+        c.drawString(lm, y, line)
+        y -= 13
     y -= 6
 
-    c.setFont("Helvetica-Bold", 12); c.drawString(lm, y, f"Total conflicts: {len(conflicts)}"); y -= 18
+    # Summary counts
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(lm, y, f"Total conflicts: {len(conflicts)}")
+    y -= 18
+
+    # List conflicts
     c.setFont("Helvetica", 11)
     for i, cf in enumerate(conflicts, start=1):
+        # Page break if needed
         if y < bm + 50:
-            c.showPage(); y = H - tm; c.setFont("Helvetica", 11)
-        acode, _ = _std_meta(cf.get("std_a_id")); bcode, _ = _std_meta(cf.get("std_b_id"))
-        param = cf.get("parameter") or "-"; sev = (cf.get("severity") or "").upper(); unit = cf.get("unit") or ""
-        c.setFont("Helvetica-Bold", 11); c.drawString(lm, y, f"{i}. {param}  [severity: {sev}]"); y -= 13; c.setFont("Helvetica", 11)
-        for ln in _wrap_lines(f"A: {acode}  →  value: {cf.get('value_a')}{(' ' + unit) if unit else ''}  (section {cf.get('section_a') or '-'})", maxw):
-            c.drawString(lm, y, ln); y -= 13
-        for ln in _wrap_lines(f"B: {bcode}  →  value: {cf.get('value_b')}{(' ' + unit) if unit else ''}  (section {cf.get('section_b') or '-'})", maxw):
-            c.drawString(lm, y, ln); y -= 13
+            c.showPage()
+            y = H - tm
+            c.setFont("Helvetica", 11)
+
+        acode, _ = _std_meta(cf.get("std_a_id"))
+        bcode, _ = _std_meta(cf.get("std_b_id"))
+        param = cf.get("parameter") or "-"
+        sev = (cf.get("severity") or "").upper()
+        unit = cf.get("unit") or ""
+
+        # Line 1: heading
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(lm, y, f"{i}. {param}  [severity: {sev}]")
+        y -= 13
+        c.setFont("Helvetica", 11)
+
+        # Line 2: A
+        a_line = f"A: {acode}  →  value: {cf.get('value_a')}{(' ' + unit) if unit else ''}  (section {cf.get('section_a') or '-'})"
+        for ln in _wrap_lines(a_line, maxw):
+            c.drawString(lm, y, ln)
+            y -= 13
+
+        # Line 3: B
+        b_line = f"B: {bcode}  →  value: {cf.get('value_b')}{(' ' + unit) if unit else ''}  (section {cf.get('section_b') or '-'})"
+        for ln in _wrap_lines(b_line, maxw):
+            c.drawString(lm, y, ln)
+            y -= 13
+
         y -= 6
-    c.showPage(); c.save()
-    pdf_bytes = buf.getvalue(); buf.close()
-       return Response(
+
+    c.showPage()
+    c.save()
+    pdf_bytes = buf.getvalue()
+    buf.close()
+
+    return Response(
         content=pdf_bytes,
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="conflicts_{standard_id}.pdf"'}

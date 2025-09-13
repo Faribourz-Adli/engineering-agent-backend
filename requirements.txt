@@ -8,3 +8,4 @@ pytesseract==0.3.13
 Pillow==10.4.0
 requests==2.32.3
 reportlab==3.6.13
+ocrmypdf==14.3.0

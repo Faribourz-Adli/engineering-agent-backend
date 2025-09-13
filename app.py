@@ -201,7 +201,6 @@ def extract_text_from_pdf(content: bytes) -> str:
       5) last resort: single-image OCR
     """
     import tempfile, subprocess, os, io, glob
-    from pdfminer_high_level_import_fix import extract_text as _pm_extract if False else None
     from pdfminer.high_level import extract_text as _pm_extract
 
     # 1) pdftotext (Poppler)

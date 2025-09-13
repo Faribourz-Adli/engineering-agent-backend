@@ -264,3 +264,57 @@ def dashboard():
         "conflicts": conflicts,
         "xref_mentions": xrefs
     }
+from typing import Dict
+
+def _norm_code(s: str) -> str:
+    if not s:
+        return ""
+    s = s.upper()
+    # remove spaces and non-alphanumerics except dot
+    import re
+    s = re.sub(r"[^A-Z0-9\.]", "", s)
+    return s
+
+@app.post("/api/xrefs/build")
+def build_xrefs(standard_id: str):
+    """
+    Build cross-references for a single standard:
+    - looks at extracted_terms where term='xref'
+    - matches term value (e.g., 'API 6D', 'ISO 15156') to other standards' codes
+    - writes rows into cross_references
+    """
+    sb = supabase_admin()
+
+    # 1) fetch this standard and all standards (id, code)
+    this_std = sb.table("standards").select("id,code").eq("id", standard_id).single().execute().data
+    if not this_std:
+        raise HTTPException(404, "standard not found")
+
+    all_codes = sb.table("standards").select("id,code").execute().data or []
+    code_map: Dict[str, str] = {}
+    for row in all_codes:
+        code_map[_norm_code(row.get("code") or "")] = row["id"]
+
+    # 2) fetch xref term values for this standard
+    terms = sb.table("extracted_terms").select("value").eq("standard_id", standard_id).eq("term", "xref").execute().data or []
+
+    created = 0
+    for t in terms:
+        raw = t.get("value") or ""
+        target_id = code_map.get(_norm_code(raw))
+        if target_id and target_id != standard_id:
+            # check if already exists
+            existing = sb.table("cross_references").select("id")\
+                .eq("from_standard_id", standard_id)\
+                .eq("to_standard_id", target_id)\
+                .limit(1).execute().data
+            if not existing:
+                sb.table("cross_references").insert({
+                    "from_standard_id": standard_id,
+                    "to_standard_id": target_id,
+                    "evidence_text": raw,
+                    "confidence": 0.9
+                }).execute()
+                created += 1
+
+    return {"ok": True, "created": created}

@@ -20,6 +20,15 @@ JSON_BUCKET = os.environ.get("SUPABASE_JSON_BUCKET", "json")
 
 app = FastAPI(title="Engineering Agent API")
 
+@app.get("/api/debug/env")
+def debug_env():
+    return {
+        "has_url": bool(SUPABASE_URL),
+        "has_service_key": bool(SUPABASE_SERVICE_KEY),
+        "has_anon_key": bool(SUPABASE_ANON_KEY),
+        "buckets": {"raw": RAW_BUCKET, "text": TEXT_BUCKET, "json": JSON_BUCKET}
+    }
+
 def supabase_admin() -> Client:
     if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
         raise RuntimeError("Missing Supabase env vars")

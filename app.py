@@ -585,3 +585,30 @@ def build_conflicts(req: BuildConflictsReq):
         created = len(rows)
 
     return {"ok": True, "created": created, "diffs": rows}
+
+@app.get("/api/conflicts/of/{standard_id}")
+def list_conflicts_for_standard(standard_id: str):
+    sb = supabase_admin()
+    # gather conflicts where this standard is on either side (A or B)
+    confA = sb.table("conflicts").select("*").eq("std_a_id", standard_id).execute().data or []
+    confB = sb.table("conflicts").select("*").eq("std_b_id", standard_id).execute().data or []
+    conflicts = confA + confB
+
+    # hydrate codes for readability
+    def _std_code(sid: str):
+        try:
+            row = sb.table("standards").select("id,code,title").eq("id", sid).single().execute().data
+            return {"id": sid, "code": (row or {}).get("code"), "title": (row or {}).get("title")}
+        except Exception:
+            return {"id": sid, "code": None, "title": None}
+
+    items = []
+    for c in conflicts:
+        items.append({
+            "parameter": c.get("parameter"),
+            "severity": c.get("severity"),
+            "unit": c.get("unit"),
+            "a": {"standard": _std_code(c.get("std_a_id")), "value": c.get("value_a"), "section": c.get("section_a")},
+            "b": {"standard": _std_code(c.get("std_b_id")), "value": c.get("value_b"), "section": c.get("section_b")},
+        })
+    return {"count": len(items), "items": items}

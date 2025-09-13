@@ -240,7 +240,7 @@ def enqueue(req: EnqueueProcessReq):
         text = extract_text_from_pdf(content)
         if not text.strip():
             raise HTTPException(400, "Could not extract text (PDF may be fully scanned; OCR config needed).")
-        meta = simple_extract_metadata(text)
+        meta = simple_extract_metadata(text, os.path.basename(req.file_path))
         std_id = upsert_standard_and_children(meta, text, req.upload_session_id)
 
         text_key = f"{uuid.uuid4()}.txt"

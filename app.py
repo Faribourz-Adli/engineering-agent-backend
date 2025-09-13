@@ -650,3 +650,125 @@ def conflicts_csv(standard_id: str):
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="conflicts_{standard_id}.csv"'}
     )
+
+from fastapi import Response
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from reportlab.lib.units import mm
+from reportlab.pdfbase.pdfmetrics import stringWidth
+import io
+from datetime import datetime as _dt
+
+def _wrap_lines(text: str, max_width: float, font_name="Helvetica", font_size=11):
+    """Simple word-wrap for reportlab drawString."""
+    words = text.split()
+    lines, line = [], ""
+    for w in words:
+        trial = (line + " " + w).strip()
+        if stringWidth(trial, font_name, font_size) <= max_width:
+            line = trial
+        else:
+            if line:
+                lines.append(line)
+            line = w
+    if line:
+        lines.append(line)
+    return lines
+
+@app.get("/api/conflicts/pdf/{standard_id}")
+def conflicts_pdf(standard_id: str):
+    sb = supabase_admin()
+    # fetch base standard
+    std = sb.table("standards").select("id,code,title").eq("id", standard_id).single().execute().data
+    if not std:
+        raise HTTPException(404, "standard not found")
+
+    # fetch conflicts where this standard is A or B
+    confA = sb.table("conflicts").select("*").eq("std_a_id", standard_id).execute().data or []
+    confB = sb.table("conflicts").select("*").eq("std_b_id", standard_id).execute().data or []
+    conflicts = confA + confB
+
+    # helper to get code/title for sides
+    def _std_meta(sid: str):
+        try:
+            r = sb.table("standards").select("id,code,title").eq("id", sid).single().execute().data
+            return (r or {}).get("code") or sid, (r or {}).get("title") or ""
+        except Exception:
+            return sid, ""
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    W, H = A4
+    lm, rm, tm, bm = 20*mm, 20*mm, 20*mm, 20*mm
+    maxw = W - lm - rm
+    y = H - tm
+
+    # Header
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(lm, y, "Conflict Summary")
+    y -= 14
+    c.setFont("Helvetica", 10)
+    c.drawString(lm, y, f"Generated: {_dt.utcnow().strftime('%Y-%m-%d %H:%M UTC')}")
+    y -= 18
+
+    # Standard info
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(lm, y, f"Standard: {std.get('code') or standard_id}")
+    y -= 14
+    c.setFont("Helvetica", 11)
+    for line in _wrap_lines(std.get("title") or "", maxw):
+        c.drawString(lm, y, line)
+        y -= 13
+    y -= 6
+
+    # Summary counts
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(lm, y, f"Total conflicts: {len(conflicts)}")
+    y -= 18
+
+    # List conflicts
+    c.setFont("Helvetica", 11)
+    for i, cf in enumerate(conflicts, start=1):
+        # Page break if needed
+        if y < bm + 50:
+            c.showPage()
+            y = H - tm
+            c.setFont("Helvetica", 11)
+
+        acode, atitle = _std_meta(cf.get("std_a_id"))
+        bcode, btitle = _std_meta(cf.get("std_b_id"))
+        param = cf.get("parameter") or "-"
+        sev = (cf.get("severity") or "").upper()
+        unit = cf.get("unit") or ""
+
+        # Line 1: heading
+        line1 = f"{i}. {param}  [severity: {sev}]"
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(lm, y, line1)
+        y -= 13
+        c.setFont("Helvetica", 11)
+
+        # Line 2: A
+        a_line = f"A: {acode}  →  value: {cf.get('value_a')}{(' ' + unit) if unit else ''}  (section {cf.get('section_a') or '-'})"
+        for ln in _wrap_lines(a_line, maxw):
+            c.drawString(lm, y, ln)
+            y -= 13
+
+        # Line 3: B
+        b_line = f"B: {bcode}  →  value: {cf.get('value_b')}{(' ' + unit) if unit else ''}  (section {cf.get('section_b') or '-'})"
+        for ln in _wrap_lines(b_line, maxw):
+            c.drawString(lm, y, ln)
+            y -= 13
+
+        y -= 6
+
+    c.showPage()
+    c.save()
+    pdf_bytes = buf.getvalue()
+    buf.close()
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="conflicts_{standard_id}.pdf"'}
+    )

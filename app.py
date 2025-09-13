@@ -448,3 +448,140 @@ def list_xrefs(standard_id: str):
                 "confidence": l.get("confidence", 0.0)
             })
     return {"count": len(items), "items": items}
+from pydantic import BaseModel
+
+# ---------- helpers for conflict detection ----------
+_num = _re.compile(r"[-+]?\d+(?:\.\d+)?")
+
+def _to_float(s: str) -> float | None:
+    if not s:
+        return None
+    m = _num.search(s)
+    return float(m.group(0)) if m else None
+
+def _to_bar(value: float | None, unit: str | None) -> float | None:
+    if value is None:
+        return None
+    u = (unit or "").lower()
+    if u in ("bar",):
+        return value
+    if u in ("psi",):
+        return value * 0.0689476
+    if u in ("kpa",):
+        return value / 100.0
+    if u in ("mpa",):
+        return value * 10.0
+    # unknown unit → return as-is
+    return value
+
+def _to_celsius(value: float | None, unit: str | None) -> float | None:
+    if value is None:
+        return None
+    u = (unit or "").lower().replace("°", "")
+    if u in ("c", "°c"):
+        return value
+    if u in ("f", "°f"):
+        return (value - 32.0) * 5.0 / 9.0
+    return value
+
+def _pick_first(terms: list[dict], name: str) -> dict | None:
+    for t in terms:
+        if t.get("term") == name:
+            return t
+    return None
+
+class BuildConflictsReq(BaseModel):
+    std_a_id: str
+    std_b_id: str
+
+@app.post("/api/conflicts/build")
+def build_conflicts(req: BuildConflictsReq):
+    """
+    Compare two standards on basic parameters and write differences to `conflicts`:
+      - pressure (numeric, normalized to bar)
+      - temperature (numeric, normalized to °C)
+      - class (Class 150/300/etc.)
+      - material (string)
+    """
+    sb = supabase_admin()
+
+    # fetch A & B
+    A = sb.table("standards").select("id,code").eq("id", req.std_a_id).single().execute().data
+    B = sb.table("standards").select("id,code").eq("id", req.std_b_id).single().execute().data
+    if not A or not B:
+        raise HTTPException(404, "one or both standards not found")
+
+    termsA = sb.table("extracted_terms").select("term,value,unit,context_path")\
+        .eq("standard_id", req.std_a_id).execute().data or []
+    termsB = sb.table("extracted_terms").select("term,value,unit,context_path")\
+        .eq("standard_id", req.std_b_id).execute().data or []
+
+    created = 0
+    rows = []
+
+    # PRESSURE
+    pA = _pick_first(termsA, "pressure")
+    pB = _pick_first(termsB, "pressure")
+    if pA and pB:
+        vA = _to_bar(_to_float(pA.get("value")), pA.get("unit"))
+        vB = _to_bar(_to_float(pB.get("value")), pB.get("unit"))
+        if vA is not None and vB is not None and abs(vA - vB) > 1e-6:
+            ratio = abs(vA - vB) / max(vA, vB)
+            severity = "high" if ratio >= 0.3 else ("medium" if ratio >= 0.1 else "low")
+            rows.append({
+                "std_a_id": req.std_a_id, "std_b_id": req.std_b_id,
+                "parameter": "design_pressure",
+                "value_a": f"{vA:.2f}", "value_b": f"{vB:.2f}", "unit": "bar",
+                "section_a": pA.get("context_path"), "section_b": pB.get("context_path"),
+                "rule_id": None, "severity": severity
+            })
+
+    # TEMPERATURE
+    tA = _pick_first(termsA, "temperature")
+    tB = _pick_first(termsB, "temperature")
+    if tA and tB:
+        vA = _to_celsius(_to_float(tA.get("value")), tA.get("unit"))
+        vB = _to_celsius(_to_float(tB.get("value")), tB.get("unit"))
+        if vA is not None and vB is not None and abs(vA - vB) >= 5.0:
+            severity = "medium" if abs(vA - vB) < 30 else "high"
+            rows.append({
+                "std_a_id": req.std_a_id, "std_b_id": req.std_b_id,
+                "parameter": "design_temperature",
+                "value_a": f"{vA:.1f}", "value_b": f"{vB:.1f}", "unit": "C",
+                "section_a": tA.get("context_path"), "section_b": tB.get("context_path"),
+                "rule_id": None, "severity": severity
+            })
+
+    # CLASS
+    cA = _pick_first(termsA, "class")
+    cB = _pick_first(termsB, "class")
+    if cA and cB:
+        nA = _to_float(cA.get("value"))
+        nB = _to_float(cB.get("value"))
+        if nA is not None and nB is not None and int(nA) != int(nB):
+            rows.append({
+                "std_a_id": req.std_a_id, "std_b_id": req.std_b_id,
+                "parameter": "pressure_class",
+                "value_a": str(int(nA)), "value_b": str(int(nB)), "unit": None,
+                "section_a": cA.get("context_path"), "section_b": cB.get("context_path"),
+                "rule_id": None, "severity": "high"
+            })
+
+    # MATERIAL
+    mA = _pick_first(termsA, "material")
+    mB = _pick_first(termsB, "material")
+    if mA and mB and (mA.get("value") or "").strip().upper() != (mB.get("value") or "").strip().upper():
+        rows.append({
+            "std_a_id": req.std_a_id, "std_b_id": req.std_b_id,
+            "parameter": "material",
+            "value_a": mA.get("value"), "value_b": mB.get("value"), "unit": None,
+            "section_a": mA.get("context_path"), "section_b": mB.get("context_path"),
+            "rule_id": None, "severity": "low"
+        })
+
+    # write conflicts
+    if rows:
+        sb.table("conflicts").insert(rows).execute()
+        created = len(rows)
+
+    return {"ok": True, "created": created, "diffs": rows}

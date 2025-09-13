@@ -321,6 +321,10 @@ def upsert_standard_and_children(meta, text, session_id) -> str:
         raise HTTPException(500, "Failed to insert standard")
     standard_id = st.data[0]["id"]
 
+# idempotent cleanup (safe even if empty)
+sb.table("standard_sections").delete().eq("standard_id", standard_id).execute()
+sb.table("extracted_terms").delete().eq("standard_id", standard_id).execute()
+
     sections = segment_sections(text)
     rows = []
     for idx, s in enumerate(sections):
@@ -332,7 +336,7 @@ def upsert_standard_and_children(meta, text, session_id) -> str:
             "order_index": idx
         })
     if rows:
-        sb.table("standard_sections").insert(rows).execute()
+        sb.table("standard_sections").upsert(rows, on_conflict="standard_id,path").execute()
 
     term_rows = []
     for s in sections:

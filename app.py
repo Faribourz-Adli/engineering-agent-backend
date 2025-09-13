@@ -168,8 +168,8 @@ def ocr_pdf_with_poppler(content: bytes, max_pages: int = 5) -> str:
 # --- helpers: text quality check + OCRmyPDF pass ---
 def _text_useful(t: str) -> bool:
     import re as _re
-    # "useful" = enough words and length (filters out copyright-only pages)
-    return len(t.strip()) > 400 and len(_re.findall(r'[A-Za-z]{3,}', t)) > 40
+    # accept shorter early pages too
+    return len(t.strip()) > 200 and len(_re.findall(r'[A-Za-z]{3,}', t)) > 20
 
 def _ocrmypdf(content: bytes) -> bytes:
     """Run OCRmyPDF to add a text layer to scanned PDFs."""
@@ -190,7 +190,6 @@ def _ocrmypdf(content: bytes) -> bytes:
         with open(out_path, "rb") as f:
             return f.read()
 
-# --- replace your existing extract_text_from_pdf with this ---
 # --- replace your entire extract_text_from_pdf with this ---
 def extract_text_from_pdf(content: bytes) -> str:
     """

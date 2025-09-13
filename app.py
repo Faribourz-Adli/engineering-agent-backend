@@ -1,0 +1,9 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+supabase==2.6.0
+pydantic==2.8.2
+python-multipart==0.0.9
+pdfminer.six==20231228
+pytesseract==0.3.13
+Pillow==10.4.0
+requests==2.32.3

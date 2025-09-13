@@ -165,75 +165,105 @@ def ocr_pdf_with_poppler(content: bytes, max_pages: int = 5) -> str:
             texts.append(pytesseract.image_to_string(img))
         return "\n".join(texts)
 
+# --- helpers: text quality check + OCRmyPDF pass ---
+def _text_useful(t: str) -> bool:
+    import re as _re
+    # "useful" = enough words and length (filters out copyright-only pages)
+    return len(t.strip()) > 400 and len(_re.findall(r'[A-Za-z]{3,}', t)) > 40
+
+def _ocrmypdf(content: bytes) -> bytes:
+    """Run OCRmyPDF to add a text layer to scanned PDFs."""
+    import tempfile, subprocess, os
+    with tempfile.TemporaryDirectory() as td:
+        in_path = os.path.join(td, "in.pdf")
+        out_path = os.path.join(td, "out.pdf")
+        with open(in_path, "wb") as f:
+            f.write(content)
+        # --skip-text: only OCR pages without text; --force-ocr as a safety
+        cmd = [
+            "ocrmypdf", "--skip-text", "--force-ocr",
+            "--rotate-pages", "--deskew",
+            "--output-type", "pdf",
+            in_path, out_path
+        ]
+        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        with open(out_path, "rb") as f:
+            return f.read()
 
 # --- replace your existing extract_text_from_pdf with this ---
+# --- replace your entire extract_text_from_pdf with this ---
 def extract_text_from_pdf(content: bytes) -> str:
     """
     Order:
-      1) pdftotext (original PDF, first 10 pages)
-      2) OCRmyPDF -> pdftotext (adds text layer for scanned PDFs)
-      3) pdfminer fallback
-      4) pdftoppm(300dpi)+tesseract OCR fallback
-      5) single-image OCR fallback
+      1) pdftotext (first 5 pages)
+      2) pdfminer
+      3) OCRmyPDF → pdftotext and pdfminer
+      4) pdftoppm(300dpi)+tesseract OCR (first 5 pages)
+      5) last resort: single-image OCR
     """
     import tempfile, subprocess, os, io, glob
+    from pdfminer_high_level_import_fix import extract_text as _pm_extract if False else None
     from pdfminer.high_level import extract_text as _pm_extract
 
-    # --- 1) pdftotext on original ---
+    # 1) pdftotext (Poppler)
     try:
         with tempfile.TemporaryDirectory() as td:
-            src = os.path.join(td, "in.pdf")
+            in_path = os.path.join(td, "in.pdf")
             out_txt = os.path.join(td, "out.txt")
-            with open(src, "wb") as f:
+            with open(in_path, "wb") as f:
                 f.write(content)
-            subprocess.run(["pdftotext", "-layout", "-f", "1", "-l", "10", src, out_txt],
+            subprocess.run(["pdftotext", "-layout", "-f", "1", "-l", "5", in_path, out_txt],
                            check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             if os.path.exists(out_txt):
-                t = open(out_txt, "r", encoding="utf-8", errors="ignore").read()
-                if t.strip():
+                with open(out_txt, "r", encoding="utf-8", errors="ignore") as f:
+                    t = f.read()
+                if _text_useful(t):
                     return t
     except Exception:
         pass
 
-    # --- 2) OCRmyPDF -> pdftotext (for scanned PDFs) ---
-    try:
-        with tempfile.TemporaryDirectory() as td:
-            src = os.path.join(td, "in.pdf")
-            ocrd = os.path.join(td, "ocr.pdf")
-            out_txt = os.path.join(td, "out.txt")
-            with open(src, "wb") as f:
-                f.write(content)
-            # add text layer only if needed
-            subprocess.run(["ocrmypdf", "-q", "--skip-text", "-l", "eng", src, ocrd],
-                           check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            subprocess.run(["pdftotext", "-layout", "-f", "1", "-l", "10", ocrd, out_txt],
-                           check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            if os.path.exists(out_txt):
-                t = open(out_txt, "r", encoding="utf-8", errors="ignore").read()
-                if t.strip():
-                    return t
-    except Exception:
-        pass
-
-    # --- 3) pdfminer fallback ---
+    # 2) pdfminer (Python)
     try:
         with io.BytesIO(content) as fh:
             t = _pm_extract(fh) or ""
-            if t.strip():
+            if _text_useful(t):
                 return t
     except Exception:
         pass
 
-    # --- 4) OCR images at 300 DPI (first 5 pages) ---
+    # 3) OCRmyPDF → pdftotext (+ pdfminer as backup)
+    try:
+        ocr_bytes = _ocrmypdf(content)
+        with tempfile.TemporaryDirectory() as td:
+            in_path = os.path.join(td, "ocr.pdf")
+            out_txt = os.path.join(td, "out.txt")
+            with open(in_path, "wb") as f:
+                f.write(ocr_bytes)
+            subprocess.run(["pdftotext", "-layout", "-f", "1", "-l", "5", in_path, out_txt],
+                           check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if os.path.exists(out_txt):
+                with open(out_txt, "r", encoding="utf-8", errors="ignore") as f:
+                    t = f.read()
+                if _text_useful(t):
+                    return t
+            # try pdfminer on the OCR'd PDF
+            with open(in_path, "rb") as fh:
+                t = _pm_extract(fh) or ""
+                if t.strip():
+                    return t
+    except Exception:
+        pass
+
+    # 4) High-DPI image OCR (first 5 pages)
     try:
         from PIL import Image
         import pytesseract
         with tempfile.TemporaryDirectory() as td:
-            src = os.path.join(td, "in.pdf")
-            with open(src, "wb") as f:
+            in_path = os.path.join(td, "in.pdf")
+            with open(in_path, "wb") as f:
                 f.write(content)
             out_base = os.path.join(td, "page")
-            subprocess.run(["pdftoppm", "-r", "300", "-f", "1", "-l", "5", "-png", src, out_base],
+            subprocess.run(["pdftoppm", "-r", "300", "-f", "1", "-l", "5", "-png", in_path, out_base],
                            check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             texts = []
             for img_path in sorted(glob.glob(out_base + "-*.png")):
@@ -245,7 +275,7 @@ def extract_text_from_pdf(content: bytes) -> str:
     except Exception:
         pass
 
-    # --- 5) last resort: treat as single image ---
+    # 5) last resort single-image OCR
     try:
         from PIL import Image
         import pytesseract

@@ -250,3 +250,17 @@ def standard_detail(standard_id: str):
     secs = sb.table("standard_sections").select("*").eq("standard_id", standard_id).order("order_index").execute().data
     terms = sb.table("extracted_terms").select("*").eq("standard_id", standard_id).execute().data
     return {"standard": std, "sections": secs, "terms": terms}
+@app.get("/api/dashboard")
+def dashboard():
+    sb = supabase_admin()
+    # simple counts for MVP (no fancy SQL)
+    total = len(sb.table("standards").select("id").execute().data or [])
+    outdated = len(sb.table("standards").select("id").eq("status", "outdated").execute().data or [])
+    conflicts = len(sb.table("conflicts").select("id").execute().data or [])
+    xrefs = len(sb.table("extracted_terms").select("id").eq("term", "xref").execute().data or [])
+    return {
+        "total_standards": total,
+        "outdated": outdated,
+        "conflicts": conflicts,
+        "xref_mentions": xrefs
+    }

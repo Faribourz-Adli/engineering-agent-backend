@@ -120,7 +120,7 @@ TERM_PATTERNS = {
     "temperature": _re.compile(r'\b(-?\d{1,3}(?:\.\d+)?)\s*(°C|°F|C|F)\b', _re.I),
     "class": _re.compile(r'\bClass\s?(150|300|600|900|1500|2500)\b', _re.I),
     "material": _re.compile(r'\b(316L|304L|A105|F316L|F51|Duplex|Superduplex|AISI\s?\d{3})\b', _re.I),
-    "xref": _re.compile(r'\b(API\s?\d+[A-Z]?|ISO\s?\d+(?:-\d+)?|ASME\s?[A-Z]?\d[\d\.]*|IEC\s?\d+|NACE\s?\w+\d+)\b', _re.I),
+    "xref": _re.compile(r'\b(API\s*(?:Spec(?:ification)?|Std(?:ard)?|RP|Recommended\s*Practice|Bulletin|Bull|MPMS)?\s*[A-Z]?\d+[A-Z]?)\b|\b(ISO\s*\d+(?:-\d+)*)\b|\b(ASME\s*[A-Z]?\d[\d\.]*)\b|\b(IEC\s*\d+)\b', _re.I),
 }
 
 def extract_terms(text: str, path: str):
@@ -299,9 +299,12 @@ def _norm_code(s: str) -> str:
     if not s:
         return ""
     s = s.upper()
-    # remove spaces and non-alphanumerics except dot
+    # Remove descriptor words so API BULLETIN/BULL/SPEC/STD/RP/RECOMMENDED PRACTICE all collapse
+    for w in ["BULLETIN", "BULL", "SPECIFICATION", "SPEC", "STANDARD", "STD",
+              "RECOMMENDED PRACTICE", "RECOMMENDEDPRACTICE", "RP", "MPMS"]:
+        s = s.replace(w, "")
     import re
-    s = re.sub(r"[^A-Z0-9\.]", "", s)
+    s = re.sub(r"[^A-Z0-9\.]", "", s)  # drop spaces and punctuation (keep dot)
     return s
 
 @app.post("/api/xrefs/build")

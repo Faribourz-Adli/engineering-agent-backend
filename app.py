@@ -722,5 +722,8 @@ def conflicts_pdf(standard_id: str):
         y -= 6
     c.showPage(); c.save()
     pdf_bytes = buf.getvalue(); buf.close()
-    return Response(content=pdf_bytes, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename=\"conflicts_{standard_id}.pdf\"" })
-
+       return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="conflicts_{standard_id}.pdf"'}
+    )

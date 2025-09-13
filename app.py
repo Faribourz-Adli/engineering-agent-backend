@@ -612,3 +612,41 @@ def list_conflicts_for_standard(standard_id: str):
             "b": {"standard": _std_code(c.get("std_b_id")), "value": c.get("value_b"), "section": c.get("section_b")},
         })
     return {"count": len(items), "items": items}
+
+from fastapi import Response
+import csv, io
+
+@app.get("/api/conflicts/csv/{standard_id}")
+def conflicts_csv(standard_id: str):
+    sb = supabase_admin()
+    confA = sb.table("conflicts").select("*").eq("std_a_id", standard_id).execute().data or []
+    confB = sb.table("conflicts").select("*").eq("std_b_id", standard_id).execute().data or []
+    conflicts = confA + confB
+
+    # lookup map for codes/titles
+    def _std(sid):
+        try:
+            r = sb.table("standards").select("id,code,title").eq("id", sid).single().execute().data
+            return (r or {}).get("code") or sid, (r or {}).get("title") or ""
+        except Exception:
+            return sid, ""
+
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["parameter","severity","unit",
+                "A_standard_code","A_standard_title","A_value","A_section",
+                "B_standard_code","B_standard_title","B_value","B_section"])
+    for c in conflicts:
+        acode, atitle = _std(c.get("std_a_id"))
+        bcode, btitle = _std(c.get("std_b_id"))
+        w.writerow([
+            c.get("parameter"), c.get("severity"), c.get("unit"),
+            acode, atitle, c.get("value_a"), c.get("section_a"),
+            bcode, btitle, c.get("value_b"), c.get("section_b")
+        ])
+    csv_data = buf.getvalue()
+    return Response(
+        content=csv_data,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="conflicts_{standard_id}.csv"'}
+    )

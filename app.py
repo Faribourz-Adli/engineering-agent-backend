@@ -10,8 +10,6 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from supabase import create_client, Client
 from pdfminer.high_level import extract_text
-from PIL import Image
-import pytesseract
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
@@ -104,6 +102,7 @@ def download_from_storage(file_path: str) -> bytes:
     return resp
 
 def extract_text_from_pdf(content: bytes) -> str:
+    # Try native PDF text first
     try:
         with io.BytesIO(content) as fh:
             text = extract_text(fh) or ""
@@ -111,7 +110,11 @@ def extract_text_from_pdf(content: bytes) -> str:
                 return text
     except Exception:
         pass
+
+    # Fallback to OCR only if needed (lazy import to avoid startup issues)
     try:
+        from PIL import Image
+        import pytesseract
         img = Image.open(io.BytesIO(content))
         return pytesseract.image_to_string(img)
     except Exception:

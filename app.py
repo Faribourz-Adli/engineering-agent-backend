@@ -230,7 +230,7 @@ def segment_sections(text: str):
 import re as _re
 TERM_PATTERNS = {
     "pressure": _re.compile(r'\b(\d{1,4}(?:\.\d+)?)\s*(bar|psi|kPa|MPa)\b', _re.I),
-    "temperature": _re.compile(r'\b(-?\d{1,3}(?:\.\d+)?)\s*(°C|°F|C|F)\b', _re.I),
+    "temperature": _re.compile(r'\b(-?\d{1,3}(?:\.\d+)?)\s*(°C|°F)\b', _re.I),
     "class": _re.compile(r'\bClass\s?(150|300|600|900|1500|2500)\b', _re.I),
     "material": _re.compile(r'\b(316L|304L|A105|F316L|F51|Duplex|Superduplex|AISI\s?\d{3})\b', _re.I),
     "xref": _re.compile(r'\b(API\s*(?:Spec(?:ification)?|Std(?:ard)?|RP|Recommended\s*Practice|Bulletin|Bull|MPMS)?\s*[A-Z]?\d+[A-Z]?)\b|\b(ISO\s*\d+(?:-\d+)*)\b|\b(ASME\s*[A-Z]?\d[\d\.]*)\b|\b(IEC\s*\d+)\b', _re.I),

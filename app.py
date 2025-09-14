@@ -325,27 +325,29 @@ def upsert_standard_and_children(meta, text, session_id, file_name: Optional[str
     sb.table("standard_sections").delete().eq("standard_id", standard_id).execute()
     sb.table("extracted_terms").delete().eq("standard_id", standard_id).execute()
 
-    # sections
+       # sections
     sections = segment_sections(text)
     rows = []
+    term_rows = []
     for idx, s in enumerate(sections):
+        path = f"{s['path']}|{idx}"  # <-- ensure unique path per section
+        body = "\n".join(s["body"])[:200000]
         rows.append({
             "standard_id": standard_id,
-            "path": s["path"],
+            "path": path,
             "heading": s["heading"][:500],
-            "body_text": "\n".join(s["body"])[:200000],
+            "body_text": body,
             "order_index": idx
         })
-    if rows:
-        sb.table("standard_sections").upsert(rows, on_conflict="standard_id,path").execute()
-
-    # terms
-    term_rows = []
-    for s in sections:
-        terms = extract_terms("\n".join(s["body"]), s["path"])
-        for t in terms:
+        # terms for this section
+        for t in extract_terms(body, path):
             t["standard_id"] = standard_id
-        term_rows.extend(terms)
+            term_rows.append(t)
+
+    if rows:
+        # we already delete earlier, so plain insert is fine (no ON CONFLICT)
+        sb.table("standard_sections").insert(rows).execute()
+
     if term_rows:
         sb.table("extracted_terms").insert(term_rows).execute()
 

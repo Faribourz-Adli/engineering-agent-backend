@@ -58,7 +58,7 @@ class EnqueueProcessReq(BaseModel):
     upload_session_id: str
     file_path: str                  # e.g., "API RP 14C 8TH ED (E1).pdf"
     force_ocr: bool = False         # OCR-first path for scanned PDFs
-    pages_sample: int = 25          # how many pages to sample for extraction
+    pages_sample: int = 0          # how many pages to sample for extraction
 
 
 class BuildConflictsReq(BaseModel):

@@ -40,6 +40,24 @@ JSON_BUCKET = os.environ.get("SUPABASE_JSON_BUCKET", "json")
 app = FastAPI(title="Engineering Agent API")
 # --- HEALTH & SMOKE ENDPOINTS (do not remove) ---
 @app.get("/healthz")
+from supabase import create_client, Client  # keep if already imported
+
+@app.get("/supabase/ping")
+def supabase_ping():
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    if not url or not key:
+        return JSONResponse(status_code=500, content={"error": "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY"})
+
+    try:
+        sb: Client = create_client(url, key)
+        # List buckets to prove connectivity (expects raw/text/json exist)
+        buckets = sb.storage.list_buckets()  # returns list of dicts
+        names = [b.get("name") for b in buckets] if buckets else []
+        return {"ok": True, "buckets": names}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
 def healthz():
     return {"status": "ok"}
 

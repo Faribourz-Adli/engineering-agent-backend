@@ -45,9 +45,22 @@ def healthz():
 
 @app.post("/ingest/test")
 async def ingest_test(file: UploadFile = File(...)):
-    head = await file.read(256)  # read a small chunk only
-    return {"filename": file.filename, "bytes": len(head)}
-# --- end ---
+    import os
+    # read a small head chunk (still 256 bytes for the smoke test)
+    await file.seek(0)
+    head = await file.read(256)
+
+    # compute total size via the underlying spooled temp file
+    file.file.seek(0, os.SEEK_END)
+    total = file.file.tell()
+    file.file.seek(0)  # reset for any later processing
+
+    return {
+        "filename": file.filename,
+        "head_len": len(head),
+        "total_bytes": total,
+        "content_type": file.content_type,
+    }
 
 def supabase_admin() -> Client:
     if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:

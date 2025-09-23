@@ -64,14 +64,17 @@ def healthz():
 @app.post("/ingest/test")
 async def ingest_test(file: UploadFile = File(...)):
     import os
-    # read a small head chunk (still 256 bytes for the smoke test)
-    await file.seek(0)
-    head = await file.read(256)
 
-    # compute total size via the underlying spooled temp file
+    # Read only a small head chunk (no await, uses underlying temp file)
+    file.file.seek(0)
+    head = file.file.read(256)
+
+    # Compute total size without loading entire file into memory
     file.file.seek(0, os.SEEK_END)
     total = file.file.tell()
-    file.file.seek(0)  # reset for any later processing
+
+    # Reset pointer in case other handlers need the file later
+    file.file.seek(0)
 
     return {
         "filename": file.filename,

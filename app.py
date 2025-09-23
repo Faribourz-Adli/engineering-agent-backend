@@ -988,3 +988,53 @@ def dashboard():
     conflicts = len(sb.table("conflicts").select("id").execute().data or [])
     xrefs = len(sb.table("extracted_terms").select("id").eq("term", "xref").execute().data or [])
     return {"total_standards": total, "outdated": outdated, "conflicts": conflicts, "xref_mentions": xrefs}
+
+
+# --- SUPABASE PING (safe, minimal) ---
+import os
+from fastapi.responses import JSONResponse
+
+try:
+    # Import inside a try so deploy won't crash if package isn't installed yet
+    from supabase import create_client
+except Exception:
+    create_client = None
+
+@app.get("/supabase/ping")
+def supabase_ping():
+    url = os.environ.get("SUPABASE_URL")
+    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+
+    if not url or not key:
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY"}
+        )
+
+    if create_client is None:
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Supabase client library not installed"}
+        )
+
+    try:
+        sb = create_client(url, key)
+
+        # Try to list buckets to prove connectivity
+        try:
+            buckets = sb.storage.list_buckets()
+            names = [b.get("name") for b in (buckets or [])]
+        except Exception:
+            # Fallback path in case list_buckets isn't available in your client version
+            names = []
+            try:
+                sb.storage.get_bucket("raw")
+                names.append("raw")
+            except Exception:
+                pass
+
+        return {"ok": True, "buckets": names}
+
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+

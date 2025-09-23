@@ -10,8 +10,7 @@ import subprocess
 from datetime import datetime
 from typing import Optional, List, Dict
 
-from fastapi import FastAPI, HTTPException, Response
-from fastapi import UploadFile, File
+from fastapi import FastAPI, HTTPException, Response, UploadFile, File
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from supabase import create_client, Client
@@ -31,57 +30,39 @@ from reportlab.pdfbase.pdfmetrics import stringWidth
 # =========================
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
-SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY")
+# Your code uses SUPABASE_SERVICE_KEY; keep it (fallback to SERVICE_ROLE_KEY if that’s what’s set)
+SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY") or os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
 
 RAW_BUCKET = os.environ.get("SUPABASE_RAW_BUCKET", "raw")
 TEXT_BUCKET = os.environ.get("SUPABASE_TEXT_BUCKET", "text")
 JSON_BUCKET = os.environ.get("SUPABASE_JSON_BUCKET", "json")
 
 app = FastAPI(title="Engineering Agent API")
-# --- HEALTH & SMOKE ENDPOINTS (do not remove) ---
+
+
+# --- HEALTH & SMOKE ENDPOINTS (fixed) ---
 @app.get("/healthz")
-from supabase import create_client, Client  # keep if already imported
-
-@app.get("/supabase/ping")
-def supabase_ping():
-    url = os.getenv("SUPABASE_URL")
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-    if not url or not key:
-        return JSONResponse(status_code=500, content={"error": "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY"})
-
-    try:
-        sb: Client = create_client(url, key)
-        # List buckets to prove connectivity (expects raw/text/json exist)
-        buckets = sb.storage.list_buckets()  # returns list of dicts
-        names = [b.get("name") for b in buckets] if buckets else []
-        return {"ok": True, "buckets": names}
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
-
 def healthz():
-    return {"status": "ok"}
+    return {"status": "ok", "now": datetime.utcnow().isoformat()}
+
 
 @app.post("/ingest/test")
 async def ingest_test(file: UploadFile = File(...)):
-    import os
-
-    # Read only a small head chunk (no await, uses underlying temp file)
+    # Read only a small head chunk and compute total size via the spooled temp file
     file.file.seek(0)
     head = file.file.read(256)
 
-    # Compute total size without loading entire file into memory
     file.file.seek(0, os.SEEK_END)
     total = file.file.tell()
 
-    # Reset pointer in case other handlers need the file later
-    file.file.seek(0)
-
+    file.file.seek(0)  # reset for any later processing
     return {
         "filename": file.filename,
         "head_len": len(head),
         "total_bytes": total,
         "content_type": file.content_type,
     }
+
 
 def supabase_admin() -> Client:
     if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
@@ -102,7 +83,7 @@ class EnqueueProcessReq(BaseModel):
     upload_session_id: str
     file_path: str                  # e.g., "API RP 14C 8TH ED (E1).pdf"
     force_ocr: bool = False         # OCR-first path for scanned PDFs
-    pages_sample: int = 0          # how many pages to sample for extraction
+    pages_sample: int = 0           # how many pages to sample for extraction
 
 
 class BuildConflictsReq(BaseModel):
@@ -990,51 +971,26 @@ def dashboard():
     return {"total_standards": total, "outdated": outdated, "conflicts": conflicts, "xref_mentions": xrefs}
 
 
-# --- SUPABASE PING (safe, minimal) ---
-import os
-from fastapi.responses import JSONResponse
-
-try:
-    # Import inside a try so deploy won't crash if package isn't installed yet
-    from supabase import create_client
-except Exception:
-    create_client = None
-
+# --- SUPABASE PING (single, consistent env names) ---
 @app.get("/supabase/ping")
 def supabase_ping():
-    url = os.environ.get("SUPABASE_URL")
-    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
-
+    url = SUPABASE_URL
+    key = SUPABASE_SERVICE_KEY
     if not url or not key:
-        return JSONResponse(
-            status_code=500,
-            content={"error": "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY"}
-        )
-
-    if create_client is None:
-        return JSONResponse(
-            status_code=500,
-            content={"error": "Supabase client library not installed"}
-        )
-
+        return JSONResponse(status_code=500, content={"error": "Missing SUPABASE_URL or SUPABASE_SERVICE_KEY"})
     try:
         sb = create_client(url, key)
-
         # Try to list buckets to prove connectivity
+        names = []
         try:
             buckets = sb.storage.list_buckets()
             names = [b.get("name") for b in (buckets or [])]
         except Exception:
-            # Fallback path in case list_buckets isn't available in your client version
-            names = []
             try:
-                sb.storage.get_bucket("raw")
-                names.append("raw")
+                sb.storage.get_bucket(RAW_BUCKET)
+                names.append(RAW_BUCKET)
             except Exception:
                 pass
-
         return {"ok": True, "buckets": names}
-
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
-
